@@ -63,7 +63,6 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix ".debug"
             versionNameSuffix "-debug"
         }
         release {
@@ -84,6 +83,16 @@ android {
 
     kotlinOptions {
         jvmTarget = '1.8'
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += [
+                '../whisper/src/main/assets',
+                '../kokoro/src/main/assets',
+                '../open-phonemizer/src/main/assets'
+            ]
+        }
     }
 
     // Prevent re-compression of large model files so they can be memory-mapped directly
@@ -110,4 +119,6 @@ dependencies {
     // WebRTC Voice Activity Detection — vendored from GitHub releases (avoids JitPack)
     // v2.0.10: 16 KB page-size compliant native libs (Play requirement for targetSdk 35+)
     implementation files('libs/android-vad-webrtc-v2.0.10-release.aar')
+
+    testImplementation 'junit:junit:4.13.2'
 }

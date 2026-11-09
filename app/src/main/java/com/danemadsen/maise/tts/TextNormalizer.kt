@@ -135,7 +135,6 @@ private fun longToOrdinal(n: Long): String {
         groups.add(0, (rem % 1000).toInt())
         rem /= 1000
     }
-    // If more than one non-zero group, only the last group is ordinal; the rest are cardinal
     val nonZeroCount = groups.count { it != 0 }
     if (nonZeroCount > 1) {
         val parts = mutableListOf<String>()
@@ -161,21 +160,24 @@ private fun longToOrdinal(n: Long): String {
 private val ORDINAL_REGEX = Regex("""\b(\d[\d,]*)(st|nd|rd|th)\b""", RegexOption.IGNORE_CASE)
 
 // Integers (with optional comma separators) or decimals, with optional leading minus.
-// Negative lookahead (?![a-zA-Z]) prevents matching ordinals like "1st", "2nd", "3rd".
 private val NUMBER_REGEX = Regex("""-?\d[\d,]*(?:\.\d+)?(?![a-zA-Z])""")
 
 // Whole-word match with optional trailing dot, before whitespace / punctuation / end-of-string.
 private val ABBREV_REGEX = Regex("""\b([A-Za-z]+)\.?(?=[\s,;:!?]|$)""")
 
-fun normalizeText(text: String): String {
-    var result = text
+fun normalizeApostrophes(text: String): String {
+    return text.replace(Regex("""[\u2018\u2019\u02BC\u2032\u0060]"""), "'")
+}
 
-    // 1. Dotted multi-character abbreviations (must run before word-level pass)
+fun normalizeText(text: String): String {
+    var result = normalizeApostrophes(text)
+
+    // 1. Dotted multi-character abbreviations
     result = result.replace(Regex("""\be\.g\.?""", RegexOption.IGNORE_CASE), "for example")
     result = result.replace(Regex("""\bi\.e\.?""", RegexOption.IGNORE_CASE), "that is")
     result = result.replace(Regex("""\betc\.?""",  RegexOption.IGNORE_CASE), "et cetera")
 
-    // 2. Ordinal numbers → words (must run before plain number pass)
+    // 2. Ordinal numbers → words
     result = ORDINAL_REGEX.replace(result) { match ->
         val raw = match.groupValues[1].replace(",", "")
         val n = raw.toLongOrNull() ?: return@replace match.value
@@ -187,7 +189,6 @@ fun normalizeText(text: String): String {
         val raw    = match.value.replace(",", "")
         val dotIdx = raw.indexOf('.')
         if (dotIdx >= 0) {
-            // Decimal: "3.14" → "three point one four"
             val isNeg    = raw.startsWith("-")
             val absStr   = raw.substring(if (isNeg) 1 else 0, dotIdx)
             val absInt   = absStr.toLongOrNull() ?: return@replace match.value

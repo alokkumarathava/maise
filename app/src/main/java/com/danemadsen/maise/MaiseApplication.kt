@@ -1,6 +1,7 @@
 package com.danemadsen.maise
 
 import android.app.Application
+import android.app.NotificationManager
 import com.google.android.material.color.DynamicColors
 
 /**
@@ -15,5 +16,8 @@ class MaiseApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         DynamicColors.applyToActivitiesIfAvailable(this)
+        runCatching {
+            getSystemService(NotificationManager::class.java)?.cancelAll()
+        }
     }
 }

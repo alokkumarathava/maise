@@ -2,6 +2,7 @@ package com.danemadsen.maise.asr
 
 import android.content.Context
 import android.util.Log
+import com.danemadsen.maise.getAssetManager
 import org.json.JSONObject
 
 private const val TAG = "WhisperTokenizer"
@@ -70,7 +71,7 @@ class WhisperTokenizer(context: Context) {
     }
 
     private fun loadVocab(context: Context): Map<Int, String> {
-        val json = context.assets.open("vocab.json").bufferedReader().use { it.readText() }
+        val json = getAssetManager(context).open("vocab.json").bufferedReader().use { it.readText() }
         val obj = JSONObject(json)
         val map = HashMap<Int, String>(obj.length())
         val keys = obj.keys()

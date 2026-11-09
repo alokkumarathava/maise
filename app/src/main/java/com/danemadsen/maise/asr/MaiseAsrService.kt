@@ -166,6 +166,23 @@ class MaiseAsrService : RecognitionService() {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
+        runCatching {
+            getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID)
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        runCatching {
+            getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID)
+        }
+        stopSelf()
     }
 
     // -------------------------------------------------------------------------

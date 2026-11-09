@@ -15,8 +15,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.danemadsen.maise.databinding.FragmentTtsBinding
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -29,8 +28,8 @@ class TtsFragment : Fragment() {
     private val binding get() = _binding!!
 
     private lateinit var prefs: SharedPreferences
-    private var tts: KokoroTTS? = null
     private var audioTrack: AudioTrack? = null
+    private var activeOrchestrator: SynthesisOrchestrator? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -53,11 +52,9 @@ class TtsFragment : Fragment() {
 
         setStatus("Loading models\u2026")
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                tts = KokoroTTS(requireContext().applicationContext)
-                withContext(Dispatchers.Main) { setStatus("Ready") }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) { setStatus("Error loading models: ${e.message}") }
+            val success = TtsEngineManager.initialize(requireContext())
+            withContext(Dispatchers.Main) {
+                if (success) setStatus("Ready") else setStatus("Error loading models")
             }
         }
 
@@ -74,7 +71,7 @@ class TtsFragment : Fragment() {
         val text = binding.inputText.text?.toString()?.trim()
         if (text.isNullOrEmpty()) { setStatus("Please enter some text."); return }
 
-        val engine = tts ?: run { setStatus("Engine not ready yet."); return }
+        val engine = TtsEngineManager.getEngineIfReady() ?: run { setStatus("Engine not ready yet."); return }
         val voiceInfo = ALL_VOICES[binding.voiceSpinner.selectedItemPosition]
         prefs.edit().putString(PREF_VOICE, voiceInfo.id).apply()
 
@@ -83,12 +80,13 @@ class TtsFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val sentences = splitSentences(text)
+                val startTimeMs = android.os.SystemClock.elapsedRealtime()
                 val minBuf = AudioTrack.getMinBufferSize(
                     SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
                 )
 
-                audioTrack?.stop(); audioTrack?.release()
+                audioTrack?.stop()
+                audioTrack?.release()
                 audioTrack = AudioTrack.Builder()
                     .setAudioAttributes(
                         AudioAttributes.Builder()
@@ -108,34 +106,77 @@ class TtsFragment : Fragment() {
                     .build()
                 audioTrack?.play()
 
-                coroutineScope {
-                    val channel = Channel<ShortArray>(capacity = 1)
-                    launch {
-                        try {
-                            for (sentence in sentences) channel.send(engine.synthesize(sentence, voiceInfo.id))
-                        } finally { channel.close() }
+                val orchestrator = SynthesisOrchestrator(engine)
+                activeOrchestrator = orchestrator
+
+                var ttfaMs = 0L
+                var first = true
+                var totalWrittenSamples = 0L
+
+                val initialUnderruns = audioTrack?.underrunCount ?: 0
+
+                orchestrator.synthesizeStream(text, voiceInfo.id) { pcm ->
+                    if (first) {
+                        ttfaMs = android.os.SystemClock.elapsedRealtime() - startTimeMs
+                        PhonemizerMetrics.lastTtfaMs.set(ttfaMs)
+                        withContext(Dispatchers.Main) { setStatus("Playing\u2026 (TTFA: ${ttfaMs}ms)") }
+                        first = false
                     }
-                    var first = true
-                    for (pcm in channel) {
-                        if (first) { withContext(Dispatchers.Main) { setStatus("Playing\u2026") }; first = false }
-                        audioTrack?.write(pcm, 0, pcm.size)
+
+                    var written = 0
+                    while (written < pcm.size && !orchestrator.isCancelled) {
+                        val track = audioTrack ?: break
+                        val count = track.write(pcm, written, pcm.size - written)
+                        if (count <= 0) break
+                        written += count
                     }
+                    totalWrittenSamples += written
+                }
+
+                // Drain audio track before stopping so final audio is not clipped
+                while (audioTrack?.playState == AudioTrack.PLAYSTATE_PLAYING && !orchestrator.isCancelled) {
+                    val headPos = audioTrack?.playbackHeadPosition?.toLong() ?: 0L
+                    if (headPos >= totalWrittenSamples) break
+                    delay(20)
+                }
+
+                val finalUnderruns = audioTrack?.underrunCount ?: 0
+                val sessionUnderruns = maxOf(0, finalUnderruns - initialUnderruns)
+                if (sessionUnderruns > 0) {
+                    PhonemizerMetrics.audioTrackUnderrunCount.addAndGet(sessionUnderruns.toLong())
+                    android.util.Log.w("TtsFragment", "AudioTrack experienced $sessionUnderruns underruns during playback")
                 }
 
                 audioTrack?.stop()
-                withContext(Dispatchers.Main) { setStatus("Done"); binding.speakButton.isEnabled = true }
+                audioTrack?.release()
+                audioTrack = null
+
+                val rtf = PhonemizerMetrics.currentRtf
+                val statusMsg = "Done (TTFA: ${ttfaMs}ms, RTF: ${"%.2f".format(rtf)}x)"
+                android.util.Log.d("TtsFragment", "Playback metrics: ${PhonemizerMetrics.getReport()}")
+                withContext(Dispatchers.Main) {
+                    setStatus(statusMsg)
+                    binding.speakButton.isEnabled = true
+                }
             } catch (e: Exception) {
-                withContext(Dispatchers.Main) { setStatus("Error: ${e.message}"); binding.speakButton.isEnabled = true }
+                withContext(Dispatchers.Main) {
+                    setStatus("Error: ${e.message}")
+                    binding.speakButton.isEnabled = true
+                }
+            } finally {
+                activeOrchestrator = null
             }
         }
     }
 
-    private fun setStatus(msg: String) { binding.statusText.text = msg }
+    private fun setStatus(msg: String) { _binding?.statusText?.text = msg }
 
     override fun onDestroyView() {
         super.onDestroyView()
-        audioTrack?.stop(); audioTrack?.release()
-        tts?.close()
+        activeOrchestrator?.cancel()
+        audioTrack?.stop()
+        audioTrack?.release()
+        audioTrack = null
         _binding = null
     }
 }

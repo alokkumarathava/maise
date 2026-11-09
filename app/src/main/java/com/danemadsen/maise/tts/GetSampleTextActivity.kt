@@ -72,10 +72,42 @@ object SampleTexts {
      * falls back to the generic English sentence), else null.
      */
     fun forLocale(language: String, country: String?): String? {
-        val lang = language.lowercase()
-        if (!country.isNullOrEmpty()) {
-            byTag["$lang-${country.lowercase()}"]?.let { return it }
+        val lang2 = normalizeLanguage(language)
+        val country2 = country?.let { normalizeCountry(it) }
+        if (!country2.isNullOrEmpty()) {
+            byTag["$lang2-${country2.lowercase()}"]?.let { return it }
         }
-        return byTag.entries.firstOrNull { it.key.startsWith("$lang-") }?.value
+        return byTag.entries.firstOrNull { it.key.startsWith("$lang2-") }?.value
+    }
+
+    private fun normalizeLanguage(lang: String): String {
+        val clean = lang.lowercase().trim().takeWhile { it != '-' && it != '_' }
+        return when (clean) {
+            "eng" -> "en"
+            "deu", "ger" -> "de"
+            "fra", "fre" -> "fr"
+            "ell", "gre" -> "el"
+            "ita" -> "it"
+            "jpn" -> "ja"
+            "por" -> "pt"
+            "zho", "chi" -> "zh"
+            else -> clean
+        }
+    }
+
+    private fun normalizeCountry(country: String): String {
+        val clean = country.uppercase().trim()
+        return when (clean) {
+            "USA" -> "US"
+            "GBR" -> "GB"
+            "DEU" -> "DE"
+            "FRA" -> "FR"
+            "GRC" -> "GR"
+            "ITA" -> "IT"
+            "JPN" -> "JP"
+            "BRA" -> "BR"
+            "CHN" -> "CN"
+            else -> clean
+        }
     }
 }
